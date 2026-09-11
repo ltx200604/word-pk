@@ -229,8 +229,64 @@ class ShanbayClient:
             )
         return out
 
+    def pull_all_learning_items(self, book_id: str, max_pages: int = 40, ipp: int = 50) -> list[dict]:
+        """Fetch all learned words via /learning/words/learning_items (has familiarity + senses)."""
+        out: list[dict] = []
+        page = 1
+        while page <= max_pages:
+            path = (
+                f"/wordsapp/user_material_books/{book_id}/learning/words/learning_items"
+                f"?page={page}&ipp={ipp}&order=DESC&order_by=UPDATED_AT"
+            )
+            try:
+                resp = self.client.get(f"{BASE}{path}")
+            except httpx.HTTPError as e:
+                raise ShanbayError(f"拉取已学词失败: {e}") from e
+            if resp.status_code >= 400:
+                raise ShanbayError(f"已学词接口 {resp.status_code}: {resp.text[:160]}")
+            data = resp.json()
+            payload = data.get("data") if isinstance(data, dict) else None
+            if not payload:
+                break
+            obj = json.loads(decode_bays4(payload))
+            objects = obj.get("objects") or []
+            for row in objects:
+                if not isinstance(row, dict):
+                    continue
+                vocab = row.get("vocab_with_senses") or {}
+                word = vocab.get("word")
+                if not word:
+                    continue
+                defs: list[str] = []
+                for sense in vocab.get("senses") or []:
+                    d = (sense.get("definition_cn") or "").strip()
+                    if d and d not in defs:
+                        defs.append(d)
+                sound = vocab.get("sound") or {}
+                fam = row.get("familiarity")
+                try:
+                    fam = float(fam or 0)
+                except (TypeError, ValueError):
+                    fam = 0.0
+                out.append(
+                    {
+                        "item_id": vocab.get("id") or row.get("id"),
+                        "word": word,
+                        "definitions": defs,
+                        "phonetic": sound.get("ipa_us") or sound.get("ipa_uk") or "",
+                        "schedule": fam,
+                        "failed_count": row.get("unknown_count") or 0,
+                        "unknown_count": row.get("unknown_count") or 0,
+                    }
+                )
+            total = obj.get("total") or 0
+            if page * ipp >= total or not objects:
+                break
+            page += 1
+        return out
+
     def pull_learned_snapshot(self) -> dict:
-        """Pull current book + learning items. Today's sync only has item_ids."""
+        """Pull current book + all learned words + today's pending schedule."""
         book = self.get_current_book()
         book_id = str(book["book_id"])
         status: dict = {}
@@ -239,41 +295,58 @@ class ShanbayClient:
         except ShanbayError as e:
             logger.warning("learning status failed: %s", e)
 
+        # 1) full history (1260 words)
+        history = self.pull_all_learning_items(book_id)
+
+        # 2) today's queue for fresher schedule/failed
+        today_map: dict[str, dict] = {}
         try:
             sync = self.get_sync_items(book_id)
+            records: list[dict] = []
+            for key in (
+                "a_not_finished_items",
+                "c_not_finished_items",
+                "a_finished_items",
+                "c_finished_items",
+            ):
+                arr = sync.get(key)
+                if isinstance(arr, list):
+                    records.extend([x for x in arr if isinstance(x, dict)])
+            for r in records:
+                iid = r.get("item_id")
+                if iid:
+                    today_map[str(iid)] = r
         except ShanbayError as e:
             logger.warning("items/sync failed: %s", e)
-            sync = {}
 
-        records: list[dict] = []
-        for key in (
-            "a_not_finished_items",
-            "c_not_finished_items",
-            "a_finished_items",
-            "c_finished_items",
-            "a_items",
-            "c_items",
-            "items",
-        ):
-            arr = sync.get(key)
-            if isinstance(arr, list):
-                records.extend([x for x in arr if isinstance(x, dict)])
+        by_word: dict[str, dict] = {}
+        for it in history:
+            w = (it.get("word") or "").lower()
+            if w:
+                by_word[w] = it
 
-        # dedupe by item_id
-        by_id: dict[Any, dict] = {}
-        for r in records:
-            iid = r.get("item_id") or r.get("id")
-            if iid is not None:
-                by_id[iid] = r
-            else:
-                by_id[f"n{len(by_id)}"] = r
-        records = list(by_id.values())
+        # overlay today's schedule if we have it
+        if today_map:
+            id_to_word = {str(it.get("item_id")): it.get("word") for it in history}
+            for iid, rec in today_map.items():
+                w = id_to_word.get(iid)
+                if not w:
+                    continue
+                base = by_word.get(w.lower())
+                if not base:
+                    continue
+                try:
+                    sch = float(rec.get("schedule") or base.get("schedule") or 0)
+                except (TypeError, ValueError):
+                    sch = base.get("schedule") or 0
+                base = dict(base)
+                base["schedule"] = sch
+                base["failed_count"] = rec.get("failed_count") or base.get("failed_count") or 0
+                by_word[w.lower()] = base
 
-        resolved = self.resolve_learning_records(records)
-        raw_items = resolved if resolved else collect_word_like_items([sync, status])
-        normalized = normalize_items(raw_items, status=status)
+        normalized = list(by_word.values())
         if not normalized:
-            _dump_debug(book_id, status, [("items/sync", sync)], raw_items)
+            _dump_debug(book_id, status, [("history", {"count": len(history)})], history)
 
         return {
             "book_id": book_id,
@@ -291,9 +364,9 @@ class ShanbayClient:
                 if k in status
             },
             "items": normalized,
-            "raw_item_count": len(raw_items),
-            "record_count": len(records),
-            "resolved_count": len(resolved),
+            "raw_item_count": len(normalized),
+            "record_count": len(history),
+            "resolved_count": len(normalized),
         }
 
 
