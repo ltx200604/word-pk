@@ -362,3 +362,148 @@ def login_with_password(username: str, password: str) -> tuple[bool, str, str | 
         return False, f"自动登录失败：{last_err or '未知原因'}。若持续失败请改用 Cookie。", None, None
     finally:
         client.close()
+
+
+def _phone_looks_valid(phone: str) -> bool:
+    phone = (phone or "").strip()
+    return phone.isdigit() and 11 <= len(phone) <= 15
+
+
+def send_sms_code(phone: str) -> tuple[bool, str]:
+    """Send Shanbay SMS login code. Returns (ok, msg)."""
+    phone = (phone or "").strip()
+    if not _phone_looks_valid(phone):
+        return False, "请输入正确的手机号"
+    if not phone.startswith("86") and len(phone) == 11:
+        phone_cn = phone
+    else:
+        phone_cn = phone
+
+    client = httpx.Client(
+        headers={
+            "User-Agent": UA,
+            "Referer": "https://web.shanbay.com/",
+            "Origin": "https://web.shanbay.com",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        timeout=20.0,
+        follow_redirects=True,
+    )
+    try:
+        try:
+            client.get("https://web.shanbay.com/")
+        except httpx.HTTPError:
+            pass
+        csrf = client.cookies.get("csrftoken") or ""
+
+        payloads = [
+            ("https://apiv3.shanbay.com/accounts/sms_code", {"phone_number": phone_cn}),
+            ("https://apiv3.shanbay.com/accounts/sms_code", {"phone": phone_cn}),
+            (
+                "https://apiv3.shanbay.com/accounts/v2/sms_code",
+                {"phone_number": phone_cn, "type": "login"},
+            ),
+            (
+                "https://web.shanbay.com/api/v1/accounts/sms/",
+                {"phone_number": phone_cn},
+            ),
+        ]
+        last = ""
+        for url, payload in payloads:
+            try:
+                resp = client.post(
+                    url,
+                    json=payload,
+                    headers={"X-CSRFToken": csrf, "Referer": "https://web.shanbay.com/"},
+                )
+            except httpx.HTTPError as e:
+                last = str(e)
+                continue
+            if resp.status_code in (200, 201, 204):
+                return True, "验证码已发送，请查收短信"
+            body = resp.text[:200]
+            last = f"HTTP {resp.status_code}: {body}"
+            if any(k in body.lower() for k in ("captcha", "verify", "risk", "滑块", "验证码图")):
+                return False, "需要图形验证，请改用 Cookie，或在扇贝 App 设密码后用密码登录"
+        return False, f"发送失败：{last}"
+    finally:
+        client.close()
+
+
+def login_with_sms(phone: str, code: str) -> tuple[bool, str, str | None, dict | None]:
+    """Login Shanbay with phone + SMS code. Returns (ok, msg, cookie, snapshot)."""
+    phone = (phone or "").strip()
+    code = (code or "").strip()
+    if not _phone_looks_valid(phone):
+        return False, "请输入正确的手机号", None, None
+    if not code:
+        return False, "请输入短信验证码", None, None
+
+    client = httpx.Client(
+        headers={
+            "User-Agent": UA,
+            "Referer": "https://web.shanbay.com/",
+            "Origin": "https://web.shanbay.com",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        timeout=25.0,
+        follow_redirects=True,
+    )
+    try:
+        try:
+            client.get("https://web.shanbay.com/")
+        except httpx.HTTPError:
+            pass
+        csrf = client.cookies.get("csrftoken") or ""
+
+        attempts = [
+            (
+                "https://apiv3.shanbay.com/accounts/login",
+                {
+                    "username": phone,
+                    "phone_number": phone,
+                    "sms_code": code,
+                    "code": code,
+                    "login_mode": "sms",
+                },
+            ),
+            (
+                "https://apiv3.shanbay.com/accounts/v2/login",
+                {"phone_number": phone, "sms_code": code, "code": code},
+            ),
+            (
+                "https://web.shanbay.com/api/v1/accounts/login_sms/",
+                {"phone_number": phone, "sms_code": code},
+            ),
+            (
+                "https://apiv3.shanbay.com/accounts/sms_login",
+                {"phone_number": phone, "sms_code": code},
+            ),
+        ]
+        last = ""
+        for url, payload in attempts:
+            try:
+                resp = client.post(
+                    url,
+                    json=payload,
+                    headers={"X-CSRFToken": csrf, "Referer": "https://web.shanbay.com/"},
+                )
+            except httpx.HTTPError as e:
+                last = str(e)
+                continue
+            sessionid = client.cookies.get("sessionid")
+            if resp.status_code < 400 and sessionid:
+                cookie_header = "; ".join(f"{c.name}={c.value}" for c in client.cookies.jar)
+                try:
+                    with ShanbayClient(cookie_header) as sb:
+                        snapshot = sb.pull_learned_snapshot()
+                    return True, "登录并同步成功", cookie_header, snapshot
+                except ShanbayError as e:
+                    last = f"登录后拉取失败: {e}"
+                    continue
+            last = f"HTTP {resp.status_code}: {resp.text[:160]}"
+        return False, f"验证码登录失败：{last}。可改用 Cookie。", None, None
+    finally:
+        client.close()

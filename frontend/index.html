@@ -3,76 +3,103 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
-  <meta name="theme-color" content="#0f172a" />
+  <meta name="theme-color" content="#0b1220" />
   <title>单词 PK</title>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
-<body>
+<body data-theme="aurora">
+  <div class="bg-decor" aria-hidden="true"></div>
   <div id="app">
-    <!-- Screen: home -->
+    <!-- home -->
     <section class="screen active" id="screen-profile">
       <header class="hero">
-        <div class="brand">单词 PK</div>
-        <p class="sub">两人固定局 · 扇贝熟练度 · 错词记忆</p>
+        <div class="brand-row">
+          <div>
+            <div class="brand">单词 PK</div>
+            <p class="sub">考研识意对战 · 扇贝熟练度 · 错词记忆</p>
+          </div>
+          <button id="btn-theme" class="icon-btn" title="换背景">🎨</button>
+        </div>
       </header>
 
       <div class="card invite-card hidden" id="invite-card">
-        <h2>对战邀请</h2>
+        <div class="invite-title">⚔️ 对战邀请</div>
         <p id="invite-text">对方已发起对战</p>
-        <button id="btn-join-invite" class="btn primary block">加入对战</button>
+        <button id="btn-join-invite" class="btn primary block glow">加入对战</button>
       </div>
 
       <div class="card">
-        <h2>我是谁</h2>
+        <div class="card-head">
+          <h2>我是谁</h2>
+          <span class="hint">点选身份 · 可删除</span>
+        </div>
         <div id="user-list" class="user-list"></div>
         <div class="row gap" id="register-row">
           <input id="new-name" placeholder="用户名（英文小写）" maxlength="20" />
           <input id="new-display" placeholder="显示名" maxlength="12" />
           <button id="btn-register" class="btn">注册</button>
         </div>
-        <p class="hint" id="profile-hint">两人各注册一次即可，之后会记住你是谁。</p>
       </div>
 
       <div class="card" id="shanbay-card">
-        <h2>扇贝同步</h2>
-        <p class="hint">两种方式任选。账号密码更省事；Cookie 更稳。数据只存在服务器本机库。</p>
-        <div class="seg" id="seg-shanbay">
-          <button data-v="password" class="on">账号密码</button>
+        <div class="card-head">
+          <h2>扇贝同步</h2>
+          <span class="hint" id="sync-me-label">先选择自己</span>
+        </div>
+        <div class="seg three" id="seg-shanbay">
+          <button data-v="sms" class="on">验证码</button>
+          <button data-v="password">密码</button>
           <button data-v="cookie">Cookie</button>
         </div>
-        <div id="shanbay-password" class="shanbay-pane">
+
+        <div id="shanbay-sms" class="shanbay-pane">
+          <input id="sb-phone" type="tel" inputmode="numeric" placeholder="扇贝绑定手机号" maxlength="15" />
           <div class="row gap">
-            <input id="sb-user" placeholder="扇贝手机号/用户名" autocomplete="username" />
+            <input id="sb-code" inputmode="numeric" placeholder="短信验证码" maxlength="8" style="flex:1" />
+            <button id="btn-send-code" class="btn">发送验证码</button>
           </div>
-          <div class="row gap">
-            <input id="sb-pass" type="password" placeholder="扇贝密码" autocomplete="current-password" />
-          </div>
+          <button id="btn-sms-login" class="btn primary block">登录并同步</button>
+          <p class="hint">没有密码也能登。若发送失败，改用 Cookie。</p>
+        </div>
+
+        <div id="shanbay-password" class="shanbay-pane hidden">
+          <input id="sb-user" placeholder="扇贝手机号/用户名" autocomplete="username" />
+          <input id="sb-pass" type="password" placeholder="扇贝密码" autocomplete="current-password" />
           <div class="row gap">
             <button id="btn-sb-login" class="btn primary">登录并同步</button>
-            <button id="btn-resync" class="btn ghost">再次同步</button>
           </div>
         </div>
+
         <div id="shanbay-cookie" class="shanbay-pane hidden">
           <textarea id="cookie-input" rows="3" placeholder="sessionid=xxxx; csrftoken=yyyy; ..."></textarea>
           <div class="row gap">
             <button id="btn-save-cookie" class="btn primary">保存并同步</button>
-            <button id="btn-resync2" class="btn ghost">再次同步</button>
           </div>
+        </div>
+        <div class="row gap">
+          <button id="btn-resync" class="btn ghost">再次同步</button>
         </div>
         <p class="hint" id="sync-status"></p>
       </div>
 
       <div class="card" id="start-card">
-        <h2>发起对战</h2>
+        <div class="card-head">
+          <h2>发起对战</h2>
+          <span class="hint" id="opponent-label"></span>
+        </div>
         <div class="field">
           <label>对手</label>
           <select id="opponent-select"></select>
         </div>
-        <details class="settings">
+        <details class="settings" open>
           <summary>对局设置</summary>
           <div class="field">
-            <label>题量：<span id="wc-label">20</span></label>
-            <input type="range" id="word-count" min="10" max="50" step="5" value="20" />
+            <label>题量</label>
+            <div class="wc-row">
+              <input type="range" id="word-count" min="10" max="50" step="1" value="20" />
+              <input type="number" id="word-count-num" min="10" max="80" step="1" value="20" class="wc-num" />
+              <span class="wc-unit">题</span>
+            </div>
           </div>
           <div class="field">
             <label>答题方式</label>
@@ -85,24 +112,25 @@
           <div class="field">
             <label>选词策略</label>
             <div class="seg" id="seg-select">
-              <button data-v="mixed" class="on">共同短板优先</button>
+              <button data-v="mixed" class="on">共同短板</button>
               <button data-v="gap">拉开差距</button>
               <button data-v="weak">两边都弱</button>
             </div>
           </div>
         </details>
-        <button id="btn-create" class="btn primary block">发起对战</button>
-        <p class="hint">对方打开本页后会看到邀请，点一下就能加入，不用填房间号。</p>
+        <button id="btn-create" class="btn primary block big">发起对战</button>
       </div>
 
       <div class="card">
-        <h2>同机演示</h2>
-        <p class="hint">两台手机还没配好时，可在本机用另一账号试一局。</p>
+        <div class="card-head">
+          <h2>同机演示</h2>
+        </div>
+        <p class="hint">两台手机还没配好时，可用另一账号在本机试一局。</p>
         <button id="btn-join-demo-home" class="btn ghost block">用另一账号加入当前对局</button>
       </div>
     </section>
 
-    <!-- Screen: room -->
+    <!-- room -->
     <section class="screen" id="screen-room">
       <header class="bar">
         <div>
@@ -112,16 +140,17 @@
         <div class="online" id="online-badge">等待对手…</div>
       </header>
       <div class="card center">
+        <div class="room-emblem">VS</div>
         <p id="room-status">正在等待对方加入…</p>
         <div class="row gap center-row">
-          <button id="btn-ready" class="btn primary">我准备好了</button>
+          <button id="btn-ready" class="btn primary big">我准备好了</button>
         </div>
         <p class="hint" id="room-hint">双方都准备后自动开赛。</p>
         <button id="btn-copy-link" class="btn ghost block">复制邀请链接</button>
       </div>
     </section>
 
-    <!-- Screen: quiz -->
+    <!-- quiz -->
     <section class="screen" id="screen-quiz">
       <header class="bar quiz-bar">
         <div class="progress-wrap">
@@ -141,17 +170,17 @@
         <div id="choice-box" class="choices"></div>
         <div id="input-box" class="input-box hidden">
           <input id="answer-input" placeholder="输入中文意思，回车提交" autocomplete="off" />
-          <button id="btn-submit-input" class="btn primary">提交</button>
+          <button id="btn-submit-input" class="btn primary block">提交</button>
         </div>
         <div id="feedback" class="feedback hidden"></div>
         <button id="btn-next" class="btn primary block hidden">下一题</button>
       </div>
     </section>
 
-    <!-- Screen: result -->
+    <!-- result -->
     <section class="screen" id="screen-result">
       <header class="hero">
-        <div class="brand">对局结束</div>
+        <div class="brand" id="result-title">对局结束</div>
         <p class="sub" id="result-sub"></p>
       </header>
       <div class="card">
@@ -169,13 +198,17 @@
         <div class="muted center-text" id="final-time"></div>
       </div>
       <div class="card">
-        <h2>本局错词 / 短板</h2>
+        <div class="card-head">
+          <h2>本局错词 / 短板</h2>
+          <span class="hint">下局约一半会复现</span>
+        </div>
         <div id="wrong-list" class="wrong-list"></div>
       </div>
-      <button id="btn-back" class="btn primary block">回到主页</button>
+      <button id="btn-back" class="btn primary block big">回到主页</button>
     </section>
   </div>
 
+  <div id="toast" class="toast hidden"></div>
   <script src="/static/app.js"></script>
 </body>
 </html>

@@ -26,7 +26,14 @@ from pydantic import BaseModel, Field
 from . import database as db
 from . import matcher
 from . import selector
-from .shanbay import ShanbayError, ShanbayClient, login_with_password, validate_cookie
+from .shanbay import (
+    ShanbayError,
+    ShanbayClient,
+    login_with_password,
+    login_with_sms,
+    send_sms_code,
+    validate_cookie,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("wordpk")
@@ -54,6 +61,16 @@ class ShanbayLoginIn(BaseModel):
     user_id: int
     username: str = Field(min_length=1)
     password: str = Field(min_length=1)
+
+
+class SmsSendIn(BaseModel):
+    phone: str = Field(min_length=8)
+
+
+class SmsLoginIn(BaseModel):
+    user_id: int
+    phone: str = Field(min_length=8)
+    code: str = Field(min_length=4)
 
 
 class CreateRoomIn(BaseModel):
@@ -112,6 +129,47 @@ def api_users() -> dict:
 def api_register(body: RegisterIn) -> dict:
     user = db.ensure_user(body.name, body.display_name)
     return {"user": _public_user(user)}
+
+
+@app.delete("/api/users/{user_id}")
+def api_delete_user(user_id: int) -> dict:
+    user = db.get_user(user_id)
+    if not user:
+        raise HTTPException(404, "用户不存在")
+    ok = db.delete_user(user_id)
+    return {"ok": ok, "deleted_id": user_id}
+
+
+@app.post("/api/shanbay/sms/send")
+def api_sms_send(body: SmsSendIn) -> dict:
+    ok, msg = send_sms_code(body.phone)
+    if not ok:
+        raise HTTPException(400, msg)
+    return {"ok": True, "message": msg}
+
+
+@app.post("/api/shanbay/sms/login")
+def api_sms_login(body: SmsLoginIn) -> dict:
+    user = db.get_user(body.user_id)
+    if not user:
+        raise HTTPException(404, "用户不存在")
+    ok, msg, cookie, snapshot = login_with_sms(body.phone, body.code)
+    if not ok or not cookie:
+        db.update_user(body.user_id, shanbay_status="invalid")
+        raise HTTPException(400, msg)
+    db.update_user(
+        body.user_id,
+        shanbay_cookie=cookie,
+        shanbay_status="ok",
+        last_sync_at=time.time(),
+    )
+    imported = _import_snapshot(body.user_id, snapshot or {})
+    return {
+        "ok": True,
+        "message": msg,
+        "imported": imported,
+        "book": (snapshot or {}).get("book_name") or (snapshot or {}).get("book_id"),
+    }
 
 
 @app.post("/api/shanbay/cookie")

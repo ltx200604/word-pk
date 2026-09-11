@@ -147,6 +147,19 @@ def get_user(user_id: int) -> dict | None:
         return dict(row) if row else None
 
 
+def delete_user(user_id: int) -> bool:
+    """Remove a user and all personal progress. Words table is shared and kept."""
+    with connect() as conn:
+        row = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not row:
+            return False
+        conn.execute("DELETE FROM user_words WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM pk_memories WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM match_answers WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        return True
+
+
 def list_users() -> list[dict]:
     with connect() as conn:
         rows = conn.execute("SELECT * FROM users ORDER BY id").fetchall()

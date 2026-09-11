@@ -1,4 +1,6 @@
-/* Word PK mobile client — fixed two-player flow */
+/* Word PK mobile client */
+const THEMES = ["aurora", "sunset", "forest", "violet", "ink"];
+
 const state = {
   users: [],
   meId: Number(localStorage.getItem("meId") || 0),
@@ -22,6 +24,7 @@ const state = {
   elapsedSec: 0,
   pendingTimer: null,
   pendingInvite: null,
+  smsCountdown: 0,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -29,6 +32,14 @@ const $ = (id) => document.getElementById(id);
 function show(id) {
   document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
   $(id).classList.add("active");
+}
+
+function toast(msg, ms = 2200) {
+  const el = $("toast");
+  el.textContent = msg;
+  el.classList.remove("hidden");
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.add("hidden"), ms);
 }
 
 async function api(path, options = {}) {
@@ -56,11 +67,53 @@ function labelAnswer(m) {
   return { choice: "选择题", input: "输入意思", mixed: "混合" }[m] || m;
 }
 function labelSelect(m) {
-  return { mixed: "共同短板优先", gap: "拉开差距", weak: "两边都弱" }[m] || m;
+  return { mixed: "共同短板", gap: "拉开差距", weak: "两边都弱" }[m] || m;
 }
 
 function otherUser() {
   return state.users.find((u) => u.id !== state.meId) || null;
+}
+
+function beep(ok) {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.connect(g);
+    g.connect(ctx.destination);
+    o.type = "sine";
+    if (ok) {
+      o.frequency.value = 660;
+      g.gain.value = 0.04;
+      o.frequency.setValueAtTime(660, ctx.currentTime);
+      o.frequency.exponentialRampToValueAtTime(990, ctx.currentTime + 0.08);
+    } else {
+      o.type = "triangle";
+      o.frequency.value = 180;
+      g.gain.value = 0.05;
+      o.frequency.exponentialRampToValueAtTime(110, ctx.currentTime + 0.12);
+    }
+    o.start();
+    g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.18);
+    o.stop(ctx.currentTime + 0.2);
+  } catch {}
+  if (navigator.vibrate) {
+    navigator.vibrate(ok ? 30 : [20, 40, 20]);
+  }
+}
+
+function applyTheme(name) {
+  const t = THEMES.includes(name) ? name : "aurora";
+  document.body.dataset.theme = t;
+  localStorage.setItem("theme", t);
+}
+
+function cycleTheme() {
+  const cur = document.body.dataset.theme || "aurora";
+  const i = THEMES.indexOf(cur);
+  const next = THEMES[(i + 1) % THEMES.length];
+  applyTheme(next);
+  toast(`背景：${next}`);
 }
 
 /* ---------- users ---------- */
@@ -70,6 +123,10 @@ async function loadUsers() {
   if (!state.meId && state.users.length === 1) {
     state.meId = state.users[0].id;
     localStorage.setItem("meId", String(state.meId));
+  }
+  if (state.meId && !state.users.some((u) => u.id === state.meId)) {
+    state.meId = state.users[0] ? state.users[0].id : 0;
+    localStorage.setItem("meId", String(state.meId || 0));
   }
   const other = otherUser();
   if (other) state.opponentId = other.id;
@@ -92,22 +149,47 @@ function renderUsers() {
     const st = u.shanbay_status === "ok" ? "扇贝已同步" : (u.shanbay_status || "未配置扇贝");
     el.innerHTML = `
       <div>
-        <div><strong>${escapeHtml(u.display_name || u.name)}</strong>${u.id === state.meId ? "（我）" : ""}</div>
-        <div class="meta">${st} · 已学 ${u.learned || 0} · 弱词 ${u.weak || 0}</div>
+        <div><strong>${escapeHtml(u.display_name || u.name)}</strong>${u.id === state.meId ? " · 我" : ""}</div>
+        <div class="meta">${st} · 已学 ${u.learned || 0} · 弱词 ${u.weak || 0} · 对局 ${u.matches || 0}</div>
         <div class="meta">上次同步：${sync}</div>
       </div>
-      <div class="meta">${u.id === state.meId ? "当前" : "设为我"}</div>
+      <div class="user-actions">
+        <span class="meta">${u.id === state.meId ? "当前" : "选我"}</span>
+        <button class="del-btn" data-del="${u.id}">删除</button>
+      </div>
     `;
-    el.onclick = () => {
+    el.onclick = (e) => {
+      if (e.target.dataset.del) return;
       state.meId = u.id;
       localStorage.setItem("meId", String(u.id));
       const other = otherUser();
       state.opponentId = other ? other.id : 0;
       renderUsers();
       renderOpponents();
+      const me = $("sync-me-label");
+      if (me) me.textContent = `同步：${u.display_name || u.name}`;
     };
     list.appendChild(el);
   }
+  list.querySelectorAll("[data-del]").forEach((btn) => {
+    btn.onclick = async (e) => {
+      e.stopPropagation();
+      const id = Number(btn.dataset.del);
+      const u = state.users.find((x) => x.id === id);
+      if (!confirm(`删除「${u?.display_name || u?.name}」及其学习进度？`)) return;
+      try {
+        await api(`/api/users/${id}`, { method: "DELETE" });
+        if (state.meId === id) {
+          state.meId = 0;
+          localStorage.setItem("meId", "0");
+        }
+        toast("已删除");
+        await loadUsers();
+      } catch (err) {
+        alert(err.message);
+      }
+    };
+  });
   renderOpponents();
 }
 
@@ -130,61 +212,118 @@ function renderOpponents() {
     state.opponentId = 0;
   }
   $("btn-create").disabled = !state.meId || !state.opponentId;
+  $("opponent-label").textContent = others.length
+    ? `对手：${others[0].display_name || others[0].name}`
+    : "请先让对方注册";
 }
 
-/* ---------- cookie / password ---------- */
+/* ---------- shanbay ---------- */
+function setSyncStatus(msg) {
+  $("sync-status").textContent = msg;
+}
+
+async function sendSmsCode() {
+  if (!state.meId) { toast("请先选择自己"); return; }
+  const phone = $("sb-phone").value.trim();
+  if (!phone) { toast("请填手机号"); return; }
+  if (state.smsCountdown > 0) return;
+  $("btn-send-code").disabled = true;
+  try {
+    const data = await api("/api/shanbay/sms/send", {
+      method: "POST",
+      body: JSON.stringify({ phone }),
+    });
+    toast(data.message || "验证码已发送");
+    state.smsCountdown = 60;
+    const tick = () => {
+      state.smsCountdown -= 1;
+      if (state.smsCountdown <= 0) {
+        $("btn-send-code").textContent = "发送验证码";
+        $("btn-send-code").disabled = false;
+      } else {
+        $("btn-send-code").textContent = `${state.smsCountdown}s`;
+        setTimeout(tick, 1000);
+      }
+    };
+    $("btn-send-code").textContent = "60s";
+    setTimeout(tick, 1000);
+  } catch (e) {
+    setSyncStatus(`发送失败：${e.message}`);
+    $("btn-send-code").disabled = false;
+  }
+}
+
+async function smsLogin() {
+  if (!state.meId) { toast("请先选择自己"); return; }
+  const phone = $("sb-phone").value.trim();
+  const code = $("sb-code").value.trim();
+  if (!phone || !code) { toast("请填手机号和验证码"); return; }
+  setSyncStatus("登录并同步中…");
+  try {
+    const data = await api("/api/shanbay/sms/login", {
+      method: "POST",
+      body: JSON.stringify({ user_id: state.meId, phone, code }),
+    });
+    setSyncStatus(`同步成功：写入 ${data.imported.imported} 词 · ${data.book || ""}`);
+    $("sb-code").value = "";
+    await loadUsers();
+  } catch (e) {
+    setSyncStatus(`失败：${e.message}`);
+  }
+}
+
 async function saveCookie() {
-  if (!state.meId) { alert("请先选择自己"); return; }
+  if (!state.meId) { toast("请先选择自己"); return; }
   const cookie = $("cookie-input").value.trim();
-  if (!cookie) { alert("请粘贴 Cookie"); return; }
-  $("sync-status").textContent = "同步中…";
+  if (!cookie) { toast("请粘贴 Cookie"); return; }
+  setSyncStatus("同步中…");
   try {
     const data = await api("/api/shanbay/cookie", {
       method: "POST",
       body: JSON.stringify({ user_id: state.meId, cookie }),
     });
-    $("sync-status").textContent = `同步成功：写入 ${data.imported.imported} 词 · 词书 ${data.book || "-"}`;
+    setSyncStatus(`同步成功：写入 ${data.imported.imported} 词 · ${data.book || "-"}`);
     await loadUsers();
   } catch (e) {
-    $("sync-status").textContent = `同步失败：${e.message}`;
+    setSyncStatus(`同步失败：${e.message}`);
   }
 }
 
 async function shanbayLogin() {
-  if (!state.meId) { alert("请先选择自己"); return; }
+  if (!state.meId) { toast("请先选择自己"); return; }
   const username = $("sb-user").value.trim();
   const password = $("sb-pass").value;
-  if (!username || !password) { alert("请填写扇贝账号和密码"); return; }
-  $("sync-status").textContent = "登录并同步中…";
+  if (!username || !password) { toast("请填写账号和密码"); return; }
+  setSyncStatus("登录并同步中…");
   $("btn-sb-login").disabled = true;
   try {
     const data = await api("/api/shanbay/login", {
       method: "POST",
       body: JSON.stringify({ user_id: state.meId, username, password }),
     });
-    $("sync-status").textContent = `同步成功：写入 ${data.imported.imported} 词 · 词书 ${data.book || "-"}`;
+    setSyncStatus(`同步成功：写入 ${data.imported.imported} 词 · ${data.book || "-"}`);
     $("sb-pass").value = "";
     await loadUsers();
   } catch (e) {
-    $("sync-status").textContent = `失败：${e.message}`;
+    setSyncStatus(`失败：${e.message}`);
   } finally {
     $("btn-sb-login").disabled = false;
   }
 }
 
 async function resync() {
-  if (!state.meId) { alert("请先选择自己"); return; }
-  $("sync-status").textContent = "再次同步中…";
+  if (!state.meId) { toast("请先选择自己"); return; }
+  setSyncStatus("再次同步中…");
   try {
     const data = await api(`/api/shanbay/sync/${state.meId}`, { method: "POST" });
-    $("sync-status").textContent = `同步成功：写入 ${data.imported.imported} 词`;
+    setSyncStatus(`同步成功：写入 ${data.imported.imported} 词`);
     await loadUsers();
   } catch (e) {
-    $("sync-status").textContent = `同步失败：${e.message}`;
+    setSyncStatus(`同步失败：${e.message}`);
   }
 }
 
-/* ---------- pending invites ---------- */
+/* ---------- pending ---------- */
 async function checkPending() {
   if (!state.meId) return;
   try {
@@ -196,60 +335,33 @@ async function checkPending() {
       state.pendingInvite = inv;
       const host = state.users.find((u) => u.id === inv.host_id);
       $("invite-text").textContent =
-        `${host ? (host.display_name || host.name) : "对方"} 邀请你对战 · ${inv.word_count} 题 · ${labelAnswer(inv.answer_mode || "mixed")}`;
+        `${host ? (host.display_name || host.name) : "对方"} 邀请你 · ${inv.word_count} 题 · ${labelAnswer(inv.answer_mode || "mixed")}`;
       card.classList.remove("hidden");
     } else {
       state.pendingInvite = null;
       card.classList.add("hidden");
     }
-    // host returning to an open room
     const hostRooms = data.host_rooms || [];
-    if (!state.started && hostRooms.length && !$("screen-room").classList.contains("active")) {
+    if (!state.started && hostRooms.length && !$("screen-room").classList.contains("active") && !$("screen-quiz").classList.contains("active")) {
       const hr = hostRooms[0];
-      state.roomCode = hr.room_code;
-      state.opponentId = hr.guest_id || state.opponentId;
-      // re-fetch questions via join (same user as host is allowed? host is user_a, join requires user in room)
-      // host already has questions in memory only if they created this session; after reload need join-like restore
       await restoreHostRoom(hr.room_code);
     }
-  } catch {
-    /* ignore poll errors */
-  }
+  } catch { /* ignore */ }
 }
 
 async function restoreHostRoom(roomCode) {
   try {
-    // host uses join endpoint too — it accepts either player
     const data = await api("/api/room/join", {
       method: "POST",
       body: JSON.stringify({ room_code: roomCode, user_id: state.meId }),
     });
-    state.roomCode = data.room_code;
-    state.matchId = data.match_id;
-    state.questions = data.questions || [];
-    state.qIndex = 0;
-    state.myScore = 0;
-    state.opAnswered = 0;
-    state.ready = false;
-    state.started = !!data.started;
-    state.finished = false;
-    state.results = [];
-    $("room-title").textContent = "对战中";
-    $("room-meta").textContent = `${data.word_count} 题`;
-    $("room-status").textContent = "对局仍在进行，点准备或等待对方。";
-    $("btn-ready").disabled = false;
-    $("btn-ready").textContent = "我准备好了";
-    show("screen-room");
-    connectWS();
-  } catch {
-    /* room gone */
-  }
+    enterRoom(data, { title: "对战中", status: "对局仍在进行，点准备或等待对方。" });
+  } catch { /* room gone */ }
 }
 
 async function joinInvite() {
   if (!state.pendingInvite) return;
-  const code = state.pendingInvite.room_code;
-  await joinRoom(code);
+  await joinRoom(state.pendingInvite.room_code);
 }
 
 async function joinRoom(roomCode) {
@@ -258,10 +370,7 @@ async function joinRoom(roomCode) {
       method: "POST",
       body: JSON.stringify({ room_code: roomCode, user_id: state.meId }),
     });
-    enterRoom(data, {
-      title: "对战中",
-      status: "已加入，点「我准备好了」",
-    });
+    enterRoom(data, { title: "对战中", status: "已加入，点「我准备好了」" });
   } catch (e) {
     alert(e.message);
     await checkPending();
@@ -294,7 +403,7 @@ function enterRoom(data, { title, status }) {
 
 async function createRoom() {
   if (!state.meId || !state.opponentId) {
-    alert("请先注册你和对方");
+    toast("请先注册你和对方");
     return;
   }
   $("btn-create").disabled = true;
@@ -312,7 +421,7 @@ async function createRoom() {
     });
     enterRoom(data, {
       title: "等待对方",
-      status: "已发起对战。把邀请链接发给对方，或等对方打开本页点「加入对战」。",
+      status: "已发起。对方打开页面点「加入对战」，或发邀请链接。",
     });
   } catch (e) {
     alert(e.message);
@@ -323,15 +432,21 @@ async function createRoom() {
 }
 
 function inviteLink() {
-  const base = `${location.origin}/?join=${state.roomCode}`;
-  return base;
+  return `${location.origin}/?join=${state.roomCode}`;
 }
 
 async function copyInvite() {
   const link = inviteLink();
   try {
+    if (navigator.share) {
+      await navigator.share({ title: "单词PK", text: "来单词PK", url: link });
+      return;
+    }
+  } catch { /* user cancel */ }
+  try {
     await navigator.clipboard.writeText(link);
-    $("room-status").textContent = `已复制邀请链接：${link}`;
+    $("room-status").textContent = `已复制：${link}`;
+    toast("邀请链接已复制");
   } catch {
     prompt("复制这个链接发给对方：", link);
   }
@@ -343,8 +458,7 @@ function connectWS() {
     try { state.ws.close(); } catch {}
   }
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  const url = `${proto}://${location.host}/ws/${state.roomCode}/${state.meId}`;
-  const ws = new WebSocket(url);
+  const ws = new WebSocket(`${proto}://${location.host}/ws/${state.roomCode}/${state.meId}`);
   state.ws = ws;
   ws.onopen = () => {
     $("online-badge").textContent = "已连接";
@@ -374,13 +488,9 @@ function handleWS(msg) {
     const ready = msg.ready || [];
     const opReady = ready.includes(state.opponentId);
     if (!state.ready) {
-      $("room-status").textContent = opReady
-        ? "对方已准备，等你准备后开赛。"
-        : "等待双方准备…";
+      $("room-status").textContent = opReady ? "对方已准备，等你准备后开赛。" : "等待双方准备…";
     } else {
-      $("room-status").textContent = opReady
-        ? "双方已准备，马上开赛…"
-        : "你已准备，等待对方…";
+      $("room-status").textContent = opReady ? "双方已准备，马上开赛…" : "你已准备，等待对方…";
     }
   } else if (msg.type === "start") {
     startQuiz();
@@ -410,7 +520,7 @@ function markReady() {
 function joinDemoOpponent() {
   const opp = otherUser();
   if (!opp || !state.roomCode) {
-    alert("请先发起对战");
+    toast("请先发起对战");
     return;
   }
   const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -419,7 +529,7 @@ function joinDemoOpponent() {
     ws2.send(JSON.stringify({ type: "ready" }));
     $("room-status").textContent = "同机演示：对手已准备。请点「我准备好了」。";
   };
-  ws2.onerror = () => alert("演示加入失败");
+  ws2.onerror = () => toast("演示加入失败");
 }
 
 /* ---------- quiz ---------- */
@@ -504,7 +614,7 @@ async function submitChoice(idx, btn) {
 
 async function submitInput() {
   const text = $("answer-input").value.trim();
-  if (!text) { alert("请输入中文意思"); return; }
+  if (!text) { toast("请输入中文意思"); return; }
   const elapsed = Date.now() - state.qStartTs;
   $("btn-submit-input").disabled = true;
   $("answer-input").disabled = true;
@@ -541,6 +651,7 @@ function applyFeedback(r, buttons, choiceIdx) {
     $("my-score").textContent = String(state.myScore);
   }
   sendWS({ type: "progress", answered: state.qIndex + 1 });
+  beep(!!r.correct);
 
   const fb = $("feedback");
   fb.classList.remove("hidden", "ok", "bad");
@@ -612,10 +723,13 @@ function showResult(result) {
     `用时 我 ${Math.round(myTime / 1000)}s · 对方 ${Math.round(opTime / 1000)}s · 共 ${total} 题`;
   if (result.winner == null) {
     $("result-sub").textContent = "平局";
+    $("result-title").textContent = "势均力敌";
   } else if (result.winner === state.meId) {
     $("result-sub").textContent = "你赢了";
+    $("result-title").textContent = "胜利";
   } else {
     $("result-sub").textContent = "对方获胜";
+    $("result-title").textContent = "再接再厉";
   }
 
   const wrong = state.results.filter((r) => !r.correct);
@@ -644,17 +758,25 @@ function backHome() {
   loadUsers();
 }
 
-/* ---------- boot / URL join ---------- */
+/* ---------- word count ---------- */
+function setWordCount(n) {
+  let v = Number(n);
+  if (!Number.isFinite(v)) v = 20;
+  v = Math.max(10, Math.min(80, Math.round(v)));
+  state.wordCount = v;
+  $("word-count").value = String(Math.min(50, v));
+  $("word-count-num").value = String(v);
+}
+
+/* ---------- URL join ---------- */
 async function tryUrlJoin() {
   const params = new URLSearchParams(location.search);
   const code = params.get("join");
   if (!code) return false;
   if (!state.meId) {
-    // wait until user picks identity
     state.pendingInvite = { room_code: code.toUpperCase() };
-    const card = $("invite-card");
     $("invite-text").textContent = "收到对战链接，请先选择「我是谁」再加入";
-    card.classList.remove("hidden");
+    $("invite-card").classList.remove("hidden");
     return false;
   }
   try {
@@ -667,10 +789,21 @@ async function tryUrlJoin() {
 }
 
 /* ---------- events ---------- */
+function bindSeg(id, onPick) {
+  document.querySelectorAll(`#${id} button`).forEach((b) => {
+    b.onclick = () => {
+      document.querySelectorAll(`#${id} button`).forEach((x) => x.classList.remove("on"));
+      b.classList.add("on");
+      onPick(b.dataset.v);
+    };
+  });
+}
+
 function bind() {
+  $("btn-theme").onclick = cycleTheme;
   $("btn-register").onclick = async () => {
     const name = $("new-name").value.trim().toLowerCase();
-    if (!name) { alert("请输入用户名"); return; }
+    if (!name) { toast("请输入用户名"); return; }
     try {
       const data = await api("/api/users/register", {
         method: "POST",
@@ -686,28 +819,25 @@ function bind() {
       alert(e.message);
     }
   };
+
+  $("btn-send-code").onclick = sendSmsCode;
+  $("btn-sms-login").onclick = smsLogin;
   $("btn-save-cookie").onclick = saveCookie;
   $("btn-sb-login").onclick = shanbayLogin;
   $("btn-resync").onclick = resync;
-  $("btn-resync2").onclick = resync;
-  document.querySelectorAll("#seg-shanbay button").forEach((b) => {
-    b.onclick = () => {
-      document.querySelectorAll("#seg-shanbay button").forEach((x) => x.classList.remove("on"));
-      b.classList.add("on");
-      const mode = b.dataset.v;
-      $("shanbay-password").classList.toggle("hidden", mode !== "password");
-      $("shanbay-cookie").classList.toggle("hidden", mode !== "cookie");
-    };
+
+  bindSeg("seg-shanbay", (mode) => {
+    $("shanbay-sms").classList.toggle("hidden", mode !== "sms");
+    $("shanbay-password").classList.toggle("hidden", mode !== "password");
+    $("shanbay-cookie").classList.toggle("hidden", mode !== "cookie");
   });
+
   $("btn-create").onclick = createRoom;
   $("btn-ready").onclick = markReady;
   $("btn-join-invite").onclick = joinInvite;
   $("btn-copy-link").onclick = copyInvite;
   $("btn-join-demo-home").onclick = () => {
-    if (!state.roomCode) {
-      alert("请先发起对战");
-      return;
-    }
+    if (!state.roomCode) { toast("请先发起对战"); return; }
     show("screen-room");
     joinDemoOpponent();
   };
@@ -718,35 +848,29 @@ function bind() {
   });
   $("btn-back").onclick = backHome;
 
-  $("word-count").oninput = (e) => {
-    state.wordCount = Number(e.target.value);
-    $("wc-label").textContent = String(state.wordCount);
+  $("word-count").oninput = (e) => setWordCount(e.target.value);
+  $("word-count-num").onchange = (e) => setWordCount(e.target.value);
+  $("word-count-num").oninput = (e) => {
+    const v = Number(e.target.value);
+    if (Number.isFinite(v) && v >= 10 && v <= 50) $("word-count").value = String(v);
   };
+
   $("opponent-select").onchange = (e) => {
     state.opponentId = Number(e.target.value);
   };
 
-  document.querySelectorAll("#seg-answer button").forEach((b) => {
-    b.onclick = () => {
-      document.querySelectorAll("#seg-answer button").forEach((x) => x.classList.remove("on"));
-      b.classList.add("on");
-      state.answerMode = b.dataset.v;
-    };
-  });
-  document.querySelectorAll("#seg-select button").forEach((b) => {
-    b.onclick = () => {
-      document.querySelectorAll("#seg-select button").forEach((x) => x.classList.remove("on"));
-      b.classList.add("on");
-      state.selectMode = b.dataset.v;
-    };
-  });
+  bindSeg("seg-answer", (v) => { state.answerMode = v; });
+  bindSeg("seg-select", (v) => { state.selectMode = v; });
 }
 
+/* boot */
+applyTheme(localStorage.getItem("theme") || "aurora");
+setWordCount(20);
 bind();
 loadUsers()
   .then(() => tryUrlJoin())
   .catch((e) => {
-    $("profile-hint").textContent = `加载失败：${e.message}`;
+    toast(`加载失败：${e.message}`);
   });
 
 state.pendingTimer = setInterval(() => {
