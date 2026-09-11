@@ -831,6 +831,10 @@ function bind() {
     $("shanbay-password").classList.toggle("hidden", mode !== "password");
     $("shanbay-cookie").classList.toggle("hidden", mode !== "cookie");
   });
+  // default pane matches the active tab (cookie)
+  $("shanbay-sms").classList.add("hidden");
+  $("shanbay-password").classList.add("hidden");
+  $("shanbay-cookie").classList.remove("hidden");
 
   $("btn-create").onclick = createRoom;
   $("btn-ready").onclick = markReady;

@@ -47,34 +47,35 @@
           <span class="hint" id="sync-me-label">先选择自己</span>
         </div>
         <div class="seg three" id="seg-shanbay">
-          <button data-v="sms" class="on">验证码</button>
+          <button data-v="cookie" class="on">Cookie</button>
           <button data-v="password">密码</button>
-          <button data-v="cookie">Cookie</button>
+          <button data-v="sms">验证码</button>
         </div>
 
-        <div id="shanbay-sms" class="shanbay-pane">
+        <div id="shanbay-sms" class="shanbay-pane hidden">
           <input id="sb-phone" type="tel" inputmode="numeric" placeholder="扇贝绑定手机号" maxlength="15" />
           <div class="row gap">
             <input id="sb-code" inputmode="numeric" placeholder="短信验证码" maxlength="8" style="flex:1" />
             <button id="btn-send-code" class="btn">发送验证码</button>
           </div>
           <button id="btn-sms-login" class="btn primary block">登录并同步</button>
-          <p class="hint">没有密码也能登。若发送失败，改用 Cookie。</p>
+          <p class="hint">若提示安全验证/发不出去：扇贝网页有阿里云验证码，自动发码常被拦。请改用 Cookie，或在扇贝 App「设置」里设密码后用「密码」登录。</p>
         </div>
 
+        <div id="shanbay-cookie" class="shanbay-pane">
+          <textarea id="cookie-input" rows="3" placeholder="sessionid=xxxx; csrftoken=yyyy; ..."></textarea>
+          <div class="row gap">
+            <button id="btn-save-cookie" class="btn primary">保存并同步</button>
+          </div>
+          <p class="hint">最稳。电脑浏览器登录 web.shanbay.com → F12 → Application → Cookies → 复制整段（含 sessionid）。</p>
+        </div>
         <div id="shanbay-password" class="shanbay-pane hidden">
           <input id="sb-user" placeholder="扇贝手机号/用户名" autocomplete="username" />
           <input id="sb-pass" type="password" placeholder="扇贝密码" autocomplete="current-password" />
           <div class="row gap">
             <button id="btn-sb-login" class="btn primary">登录并同步</button>
           </div>
-        </div>
-
-        <div id="shanbay-cookie" class="shanbay-pane hidden">
-          <textarea id="cookie-input" rows="3" placeholder="sessionid=xxxx; csrftoken=yyyy; ..."></textarea>
-          <div class="row gap">
-            <button id="btn-save-cookie" class="btn primary">保存并同步</button>
-          </div>
+          <p class="hint">若无密码：在扇贝 App「我的 → 设置」里设置登录密码。</p>
         </div>
         <div class="row gap">
           <button id="btn-resync" class="btn ghost">再次同步</button>
