@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>单词 PK</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Screen: home -->
+    <section class="screen active" id="screen-profile">
+      <header class="hero">
+        <div class="brand">单词 PK</div>
+        <p class="sub">两人固定局 · 扇贝熟练度 · 错词记忆</p>
+      </header>
+
+      <div class="card invite-card hidden" id="invite-card">
+        <h2>对战邀请</h2>
+        <p id="invite-text">对方已发起对战</p>
+        <button id="btn-join-invite" class="btn primary block">加入对战</button>
+      </div>
+
+      <div class="card">
+        <h2>我是谁</h2>
+        <div id="user-list" class="user-list"></div>
+        <div class="row gap" id="register-row">
+          <input id="new-name" placeholder="用户名（英文小写）" maxlength="20" />
+          <input id="new-display" placeholder="显示名" maxlength="12" />
+          <button id="btn-register" class="btn">注册</button>
+        </div>
+        <p class="hint" id="profile-hint">两人各注册一次即可，之后会记住你是谁。</p>
+      </div>
+
+      <div class="card" id="shanbay-card">
+        <h2>扇贝同步</h2>
+        <p class="hint">两种方式任选。账号密码更省事；Cookie 更稳。数据只存在服务器本机库。</p>
+        <div class="seg" id="seg-shanbay">
+          <button data-v="password" class="on">账号密码</button>
+          <button data-v="cookie">Cookie</button>
+        </div>
+        <div id="shanbay-password" class="shanbay-pane">
+          <div class="row gap">
+            <input id="sb-user" placeholder="扇贝手机号/用户名" autocomplete="username" />
+          </div>
+          <div class="row gap">
+            <input id="sb-pass" type="password" placeholder="扇贝密码" autocomplete="current-password" />
+          </div>
+          <div class="row gap">
+            <button id="btn-sb-login" class="btn primary">登录并同步</button>
+            <button id="btn-resync" class="btn ghost">再次同步</button>
+          </div>
+        </div>
+        <div id="shanbay-cookie" class="shanbay-pane hidden">
+          <textarea id="cookie-input" rows="3" placeholder="sessionid=xxxx; csrftoken=yyyy; ..."></textarea>
+          <div class="row gap">
+            <button id="btn-save-cookie" class="btn primary">保存并同步</button>
+            <button id="btn-resync2" class="btn ghost">再次同步</button>
+          </div>
+        </div>
+        <p class="hint" id="sync-status"></p>
+      </div>
+
+      <div class="card" id="start-card">
+        <h2>发起对战</h2>
+        <div class="field">
+          <label>对手</label>
+          <select id="opponent-select"></select>
+        </div>
+        <details class="settings">
+          <summary>对局设置</summary>
+          <div class="field">
+            <label>题量：<span id="wc-label">20</span></label>
+            <input type="range" id="word-count" min="10" max="50" step="5" value="20" />
+          </div>
+          <div class="field">
+            <label>答题方式</label>
+            <div class="seg" id="seg-answer">
+              <button data-v="choice" class="on">选择题</button>
+              <button data-v="input">输入意思</button>
+              <button data-v="mixed">混合</button>
+            </div>
+          </div>
+          <div class="field">
+            <label>选词策略</label>
+            <div class="seg" id="seg-select">
+              <button data-v="mixed" class="on">共同短板优先</button>
+              <button data-v="gap">拉开差距</button>
+              <button data-v="weak">两边都弱</button>
+            </div>
+          </div>
+        </details>
+        <button id="btn-create" class="btn primary block">发起对战</button>
+        <p class="hint">对方打开本页后会看到邀请，点一下就能加入，不用填房间号。</p>
+      </div>
+
+      <div class="card">
+        <h2>同机演示</h2>
+        <p class="hint">两台手机还没配好时，可在本机用另一账号试一局。</p>
+        <button id="btn-join-demo-home" class="btn ghost block">用另一账号加入当前对局</button>
+      </div>
+    </section>
+
+    <!-- Screen: room -->
+    <section class="screen" id="screen-room">
+      <header class="bar">
+        <div>
+          <div class="room-code" id="room-title">对战中</div>
+          <div class="muted" id="room-meta"></div>
+        </div>
+        <div class="online" id="online-badge">等待对手…</div>
+      </header>
+      <div class="card center">
+        <p id="room-status">正在等待对方加入…</p>
+        <div class="row gap center-row">
+          <button id="btn-ready" class="btn primary">我准备好了</button>
+        </div>
+        <p class="hint" id="room-hint">双方都准备后自动开赛。</p>
+        <button id="btn-copy-link" class="btn ghost block">复制邀请链接</button>
+      </div>
+    </section>
+
+    <!-- Screen: quiz -->
+    <section class="screen" id="screen-quiz">
+      <header class="bar quiz-bar">
+        <div class="progress-wrap">
+          <div class="progress-text"><span id="q-now">1</span>/<span id="q-total">20</span></div>
+          <div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div>
+        </div>
+        <div class="timer" id="timer">0</div>
+      </header>
+      <div class="vs">
+        <div class="vs-me">我 <span id="my-score">0</span></div>
+        <div class="vs-op">对方 <span id="op-progress">0</span></div>
+      </div>
+
+      <div class="card quiz-card">
+        <div class="word" id="quiz-word">—</div>
+        <div class="phonetic" id="quiz-phonetic"></div>
+        <div id="choice-box" class="choices"></div>
+        <div id="input-box" class="input-box hidden">
+          <input id="answer-input" placeholder="输入中文意思，回车提交" autocomplete="off" />
+          <button id="btn-submit-input" class="btn primary">提交</button>
+        </div>
+        <div id="feedback" class="feedback hidden"></div>
+        <button id="btn-next" class="btn primary block hidden">下一题</button>
+      </div>
+    </section>
+
+    <!-- Screen: result -->
+    <section class="screen" id="screen-result">
+      <header class="hero">
+        <div class="brand">对局结束</div>
+        <p class="sub" id="result-sub"></p>
+      </header>
+      <div class="card">
+        <div class="scoreboard">
+          <div class="score-side">
+            <div class="score-label">我</div>
+            <div class="score-num" id="final-me">0</div>
+          </div>
+          <div class="score-vs">VS</div>
+          <div class="score-side">
+            <div class="score-label">对方</div>
+            <div class="score-num" id="final-op">0</div>
+          </div>
+        </div>
+        <div class="muted center-text" id="final-time"></div>
+      </div>
+      <div class="card">
+        <h2>本局错词 / 短板</h2>
+        <div id="wrong-list" class="wrong-list"></div>
+      </div>
+      <button id="btn-back" class="btn primary block">回到主页</button>
+    </section>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

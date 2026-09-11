@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: word-pk
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: PORT
+        value: 8765
+    disk:
+      name: word-pk-data
+      mountPath: /app/data
+      sizeGB: 1
